@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+
+CMD_LIB_DIR="${HOME}/.setup/cmd-lib"
+LIB_PY="${CMD_LIB_DIR}/lib.py"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+check_deps() {
+  if ! python3 -c "import yaml" 2>/dev/null; then
+    echo "PyYAML not found. Installing..."
+    pip3 install pyyaml --quiet 2>/dev/null \
+      || sudo apt-get install -y python3-yaml -qq \
+      || { echo -e "${RED}Could not install PyYAML. Run: pip3 install pyyaml${NC}"; exit 1; }
+  fi
+}
+
+copy_to_clipboard() {
+  local text="$1"
+  if command -v wl-copy &>/dev/null; then
+    echo -n "$text" | wl-copy
+  elif command -v xclip &>/dev/null; then
+    echo -n "$text" | xclip -selection clipboard
+  elif command -v xsel &>/dev/null; then
+    echo -n "$text" | xsel --clipboard --input
+  else
+    echo -e "${YELLOW}No clipboard tool found${NC} (install xclip or wl-clipboard)"
+    return 1
+  fi
+}
+
+fill_placeholders() {
+  local cmd="$1"
+  local filled="$cmd"
+
+  local placeholders
+  placeholders=$(echo "$cmd" | grep -oP '\{[^}]+\}' | sort -u)
+  [[ -z "$placeholders" ]] && { echo "$filled"; return; }
+
+  while IFS= read -r placeholder; do
+    local var_name="${placeholder:1:${#placeholder}-2}"
+    echo -ne "  ${CYAN}${var_name}${NC}: " >&2
+    read -r value </dev/tty
+    filled="${filled//$placeholder/$value}"
+  done <<< "$placeholders"
+
+  echo "$filled"
+}
+
+get_last_cmd() {
+  local last
+  # zsh history format: ": timestamp:elapsed;command"
+  last=$(tail -50 ~/.zsh_history 2>/dev/null \
+    | grep -v '^: [0-9]*:[0-9]*;cl' \
+    | tail -1 \
+    | sed 's/^: [0-9]*:[0-9]*;//')
+  # bash fallback
+  [[ -z "$last" ]] && last=$(tail -50 ~/.bash_history 2>/dev/null \
+    | grep -v '^cl' \
+    | tail -1)
+  echo "$last"
+}
+
+# ── fzf browser ──────────────────────────────────────────────────────────────
+
+# Final step: pick a command and copy/run it
+browse_commands() {
+  local tool="$1"
+  local category="$2"
+  local prompt="${tool}/${category}"
+
+  local commands
+  commands=$(python3 "$LIB_PY" list "$CMD_LIB_DIR" "$tool" "$category")
+  [[ -z "$commands" ]] && { echo -e "${YELLOW}No commands found.${NC}"; exit 0; }
+
+  local raw
+  raw=$(echo "$commands" | fzf \
+    --prompt="  ${prompt} > " \
+    --delimiter=$'\t' \
+    --with-nth=1 \
+    --preview='
+      name=$(echo {} | cut -f4)
+      cmd=$(echo {} | cut -f5)
+      printf "\n  \033[2m%s\033[0m\n\n  \033[1m$ %s\033[0m\n" "$name" "$cmd"
+    ' \
+    --preview-window='bottom:6:wrap' \
+    --header='enter: copy   ctrl-r: run   ctrl-b: back' \
+    --height=60% \
+    --border=rounded \
+    --expect='ctrl-r,ctrl-b,enter'
+  )
+
+  [[ -z "$raw" ]] && return
+
+  local key line
+  key=$(echo "$raw" | head -1)
+  line=$(echo "$raw" | sed -n '2p')
+
+  [[ "$key" == "ctrl-b" ]] && { browse_categories "$tool"; return; }
+  [[ -z "$line" ]] && return
+
+  local command
+  command=$(echo "$line" | cut -f5)
+
+  echo ""
+  local filled
+  filled=$(fill_placeholders "$command")
+
+  if [[ "$key" == "ctrl-r" ]]; then
+    echo -e "${BLUE}→${NC}  ${BOLD}${filled}${NC}\n"
+    eval "$filled"
+  else
+    copy_to_clipboard "$filled" \
+      && echo -e "${GREEN}✓${NC}  Copied: ${BOLD}${filled}${NC}" \
+      || echo -e "    ${BOLD}${filled}${NC}"
+  fi
+}
+
+# Middle step: pick a category within a tool
+browse_categories() {
+  local tool="$1"
+  local yaml_file="${CMD_LIB_DIR}/${tool}.yaml"
+
+  if [[ ! -f "$yaml_file" ]]; then
+    echo -e "${RED}Unknown tool:${NC} ${tool}  (no file at ${yaml_file})"
+    exit 1
+  fi
+
+  local cats
+  cats=$(python3 "$LIB_PY" list_cats "$yaml_file")
+  [[ -z "$cats" ]] && { echo -e "${YELLOW}No commands for:${NC} ${tool}"; exit 0; }
+
+  local raw
+  raw=$(echo "$cats" | fzf \
+    --prompt="  ${tool} / " \
+    --delimiter=$'\t' \
+    --with-nth=1,2 \
+    --preview="python3 '$LIB_PY' preview_cat '$yaml_file' '$tool' \$(echo {} | cut -f1)" \
+    --preview-window='right:55%:wrap' \
+    --header='select category   ctrl-a: search all   ctrl-b: back' \
+    --height=60% \
+    --border=rounded \
+    --expect='ctrl-a,ctrl-b,enter'
+  )
+
+  [[ -z "$raw" ]] && return
+
+  local key cat
+  key=$(echo "$raw" | head -1)
+  cat=$(echo "$raw" | sed -n '2p' | cut -f1)
+
+  case "$key" in
+    ctrl-a) browse_commands "$tool" "" ;;
+    ctrl-b) browse_tools ;;
+    *)      [[ -n "$cat" ]] && browse_commands "$tool" "$cat" ;;
+  esac
+}
+
+# Top step: pick a tool
+browse_tools() {
+  local tools
+  tools=$(python3 "$LIB_PY" list_tools "$CMD_LIB_DIR")
+
+  if [[ -z "$tools" ]]; then
+    echo -e "${YELLOW}Library is empty.${NC} Try: ${BOLD}cl add${NC}"
+    exit 0
+  fi
+
+  local raw
+  raw=$(echo "$tools" | fzf \
+    --prompt="  cl / " \
+    --delimiter=$'\t' \
+    --with-nth=1,2 \
+    --preview="python3 '$LIB_PY' preview_tool '$CMD_LIB_DIR/'\$(echo {} | cut -f1)'.yaml'" \
+    --preview-window='right:50%:wrap' \
+    --header='select tool   ctrl-f: search everything' \
+    --height=60% \
+    --border=rounded \
+    --expect='ctrl-f,enter'
+  )
+
+  [[ -z "$raw" ]] && return
+
+  local key tool
+  key=$(echo "$raw" | head -1)
+  tool=$(echo "$raw" | sed -n '2p' | cut -f1)
+
+  case "$key" in
+    ctrl-f) browse_commands "" "" ;;
+    *)      [[ -n "$tool" ]] && browse_categories "$tool" ;;
+  esac
+}
+
+# ── commands ─────────────────────────────────────────────────────────────────
+
+cmd_add() {
+  check_deps
+
+  local tool="$1"
+  local category="$2"
+  local preset_cmd=""
+
+  # cl add last — grab from shell history
+  if [[ "$tool" == "last" ]]; then
+    preset_cmd=$(get_last_cmd)
+    if [[ -z "$preset_cmd" ]]; then
+      echo -e "${YELLOW}Could not read last command from history.${NC}"
+      exit 1
+    fi
+    echo -e "Last command: ${BOLD}${preset_cmd}${NC}"
+    echo -ne "Save this? [Y/n] "
+    read -r confirm </dev/tty
+    [[ "$confirm" =~ ^[Nn]$ ]] && { echo "Aborted."; exit 0; }
+    tool=""
+    category=""
+  fi
+
+  # Pick tool
+  if [[ -z "$tool" ]]; then
+    local existing
+    existing=$(ls "${CMD_LIB_DIR}"/*.yaml 2>/dev/null | xargs -I{} basename {} .yaml)
+    if [[ -n "$existing" ]]; then
+      tool=$(echo "$existing" | fzf \
+        --prompt="  Tool > " \
+        --height=15 \
+        --border=rounded \
+        --print-query \
+        --header="Select existing or type a new tool name" \
+        | tail -1)
+    else
+      echo -ne "Tool name: "
+      read -r tool </dev/tty
+    fi
+  fi
+  [[ -z "$tool" ]] && { echo "Aborted."; exit 0; }
+
+  # Pick category
+  if [[ -z "$category" ]]; then
+    local yaml_file="${CMD_LIB_DIR}/${tool}.yaml"
+    if [[ -f "$yaml_file" ]]; then
+      category=$(python3 "$LIB_PY" categories "$yaml_file" | fzf \
+        --prompt="  Category > " \
+        --height=15 \
+        --border=rounded \
+        --print-query \
+        --header="Select existing or type a new category" \
+        | tail -1)
+    else
+      echo -ne "Category: "
+      read -r category </dev/tty
+    fi
+  fi
+  [[ -z "$category" ]] && { echo "Aborted."; exit 0; }
+
+  # Description
+  echo -ne "Description: "
+  read -r name </dev/tty
+  [[ -z "$name" ]] && { echo "Aborted."; exit 0; }
+
+  # Command (pre-filled if from history)
+  if [[ -n "$preset_cmd" ]]; then
+    echo -ne "Command [${preset_cmd}]: "
+    read -r input </dev/tty
+    [[ -n "$input" ]] && preset_cmd="$input"
+    local command="$preset_cmd"
+  else
+    echo -ne "Command: "
+    read -r command </dev/tty
+  fi
+  [[ -z "$command" ]] && { echo "Aborted."; exit 0; }
+
+  python3 "$LIB_PY" add "${CMD_LIB_DIR}/${tool}.yaml" "$category" "$name" "$command"
+  echo -e "\n${GREEN}✓${NC}  Saved '${name}' → ${CYAN}${tool}${NC}/${BLUE}${category}${NC}"
+  echo -e "   ${BOLD}\$ ${command}${NC}"
+}
+
+cmd_tools() {
+  check_deps
+  echo -e "${BOLD}Command library${NC}\n"
+  local found=false
+  for f in "${CMD_LIB_DIR}"/*.yaml; do
+    [[ -f "$f" ]] || continue
+    found=true
+    local tool count
+    tool=$(basename "$f" .yaml)
+    count=$(python3 "$LIB_PY" count "$f")
+    printf "  ${CYAN}%-20s${NC} %s commands\n" "$tool" "$count"
+  done
+  $found || echo "  No tools yet. Try: cl add"
+}
+
+cmd_edit() {
+  local tool="$1"
+  if [[ -z "$tool" ]]; then
+    tool=$(ls "${CMD_LIB_DIR}"/*.yaml 2>/dev/null \
+      | xargs -I{} basename {} .yaml \
+      | fzf --prompt="  Edit > " --height=15 --border=rounded)
+  fi
+  [[ -z "$tool" ]] && exit 0
+  local f="${CMD_LIB_DIR}/${tool}.yaml"
+  [[ ! -f "$f" ]] && { echo -e "${RED}Not found:${NC} ${tool}"; exit 1; }
+  "${EDITOR:-nano}" "$f"
+}
+
+cmd_help() {
+  echo -e "${BOLD}cl${NC} — command library\n"
+  echo -e "${BOLD}Usage:${NC}"
+  echo "  cl                       browse all saved commands"
+  echo "  cl <tool>                browse commands for a tool (e.g. cl git)"
+  echo "  cl <tool> <category>     browse a specific category (e.g. cl git branches)"
+  echo "  cl add                   add a new command interactively"
+  echo "  cl add last              save your last terminal command to the library"
+  echo "  cl tools                 list all tools and command counts"
+  echo "  cl edit [tool]           open a tool file in \$EDITOR"
+  echo ""
+  echo -e "${BOLD}In the browser:${NC}"
+  echo "  enter       copy command to clipboard (fills placeholders first)"
+  echo "  ctrl-r      run command immediately   (fills placeholders first)"
+  echo ""
+  echo -e "${BOLD}Placeholders:${NC} use {name} syntax, e.g. git checkout -b {branch_name}"
+}
+
+# ── dispatch ─────────────────────────────────────────────────────────────────
+
+case "$1" in
+  add)            shift; cmd_add "$@" ;;
+  tools)          cmd_tools ;;
+  edit)           shift; cmd_edit "$@" ;;
+  help|--help|-h) cmd_help ;;
+  "")             check_deps; browse_tools ;;
+  *)
+    check_deps
+    if [[ -n "$2" ]]; then
+      browse_commands "$1" "$2"   # cl git branches → straight to commands
+    else
+      browse_categories "$1"      # cl git → category picker
+    fi
+    ;;
+esac

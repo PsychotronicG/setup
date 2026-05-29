@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# ── ports ─────────────────────────────────────────────────────────────────────
+
+get_ports() {
+  python3 - << 'PYEOF'
+import subprocess, re
+
+def parse(proto, flags):
+    r = subprocess.run(['ss'] + flags, capture_output=True, text=True)
+    rows = []
+    for line in r.stdout.splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 5)
+        if len(parts) < 4:
+            continue
+        port = parts[3].rsplit(':', 1)[-1]
+        proc = parts[5] if len(parts) > 5 else ''
+        name = re.search(r'\("([^"]+)"', proc)
+        pid  = re.search(r'pid=(\d+)',   proc)
+        rows.append((proto, port, name.group(1) if name else '-', pid.group(1) if pid else '-'))
+    rows.sort(key=lambda x: int(x[1]) if x[1].isdigit() else 0)
+    for r in rows:
+        print('\t'.join(r))
+
+parse('tcp', ['-tlnp'])
+parse('udp', ['-ulnp'])
+PYEOF
+}
+
+kill_port_process() {
+  local pid="$1"
+  local name="$2"
+  local port="$3"
+
+  if [[ "$pid" == "?" || -z "$pid" ]]; then
+    echo -e "${YELLOW}No PID available — try running with sudo${NC}"
+    return 1
+  fi
+
+  echo -e "${YELLOW}Kill '${name}' (PID ${pid}) on port ${port}?${NC} [y/N] "
+  read -r confirm </dev/tty
+  [[ ! "$confirm" =~ ^[Yy]$ ]] && { echo "Aborted."; return; }
+
+  if kill -15 "$pid" 2>/dev/null; then
+    sleep 0.5
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null && echo -e "${GREEN}✓${NC}  Killed (SIGKILL)"
+    else
+      echo -e "${GREEN}✓${NC}  Killed '${name}' (PID ${pid})"
+    fi
+  else
+    echo -e "${RED}Failed${NC} — try: sudo kill ${pid}"
+  fi
+}
+
+cmd_ports() {
+  local filter="$1"
+
+  local ports
+  ports=$(get_ports)
+
+  if [[ -z "$ports" ]]; then
+    echo "No listening ports found."
+    return
+  fi
+
+  # Direct lookup for a specific port number
+  if [[ -n "$filter" ]] && [[ "$filter" =~ ^[0-9]+$ ]]; then
+    local match
+    match=$(echo "$ports" | awk -F'\t' -v p="$filter" '$2 == p')
+    if [[ -z "$match" ]]; then
+      echo -e "Port ${BOLD}${filter}${NC}: nothing listening"
+    else
+      echo -e "Port ${BOLD}${filter}${NC}:"
+      echo "$match" | while IFS=$'\t' read -r proto port name pid; do
+        echo -e "  ${CYAN}${proto}${NC}  process: ${BOLD}${name}${NC}  pid: ${pid}"
+      done
+    fi
+    return
+  fi
+
+  # fzf browser
+  local display
+  display=$(echo "$ports" | awk -F'\t' '{
+    printf "%-6s %-7s %-22s %s\n", $1, $2, $3, $4
+  }')
+
+  local header
+  header=$(printf "%-6s %-7s %-22s %s" "PROTO" "PORT" "PROCESS" "PID")
+
+  local raw
+  raw=$(echo "$display" | fzf \
+    --prompt="  ports > " \
+    --header="${header}"$'\n'"ctrl-k: kill process   ctrl-r: refresh" \
+    --preview='
+      proto=$(echo {} | awk "{print \$1}")
+      port=$(echo {} | awk "{print \$2}")
+      pid=$(echo {} | awk "{print \$4}")
+      echo ""
+      echo "  Port:    $port ($proto)"
+      echo "  PID:     $pid"
+      if [[ "$pid" != "?" ]] && [[ -n "$pid" ]]; then
+        echo ""
+        echo "  Command:"
+        ps -p "$pid" -o pid,user,%cpu,%mem,cmd --no-headers 2>/dev/null | sed "s/^/  /"
+      fi
+    ' \
+    --preview-window='bottom:8:wrap' \
+    --height=60% \
+    --border=rounded \
+    --expect='ctrl-k,enter'
+  )
+
+  [[ -z "$raw" ]] && return
+
+  local key line
+  key=$(echo "$raw" | head -1)
+  line=$(echo "$raw" | sed -n '2p')
+  [[ -z "$line" ]] && return
+
+  local proto port name pid
+  proto=$(echo "$line" | awk '{print $1}')
+  port=$(echo "$line"  | awk '{print $2}')
+  name=$(echo "$line"  | awk '{print $3}')
+  pid=$(echo "$line"   | awk '{print $4}')
+
+  if [[ "$key" == "ctrl-k" ]]; then
+    kill_port_process "$pid" "$name" "$port"
+  fi
+}
+
+# ── sysinfo ───────────────────────────────────────────────────────────────────
+
+section() {
+  echo -e "\n${CYAN}${BOLD}$1${NC}"
+  echo -e "${DIM}$(printf '%.0s─' {1..40})${NC}"
+}
+
+cmd_sysinfo() {
+  section "System"
+  echo -e "  Hostname   $(hostname)"
+  echo -e "  OS         $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2)"
+  echo -e "  Kernel     $(uname -r)"
+  echo -e "  Uptime     $(uptime -p 2>/dev/null | sed 's/up //')"
+  echo -e "  Shell      $SHELL"
+
+  section "CPU"
+  local cpu_model cpu_cores cpu_threads cpu_freq
+  cpu_model=$(lscpu 2>/dev/null | awk -F': +' '/Model name/ {print $2; exit}')
+  cpu_cores=$(lscpu 2>/dev/null | awk -F': +' '/^Core\(s\) per socket/ {print $2}')
+  cpu_threads=$(lscpu 2>/dev/null | awk -F': +' '/^Thread\(s\) per core/ {print $2}')
+  cpu_sockets=$(lscpu 2>/dev/null | awk -F': +' '/^Socket\(s\)/ {print $2}')
+  cpu_arch=$(lscpu 2>/dev/null | awk -F': +' '/^Architecture/ {print $2}')
+  cpu_freq=$(lscpu 2>/dev/null | awk -F': +' '/CPU max MHz/ {printf "%.0f MHz", $2; exit}')
+  echo -e "  Model      ${cpu_model:-unknown}"
+  echo -e "  Arch       ${cpu_arch}  |  Sockets: ${cpu_sockets}  |  Cores: ${cpu_cores}  |  Threads/core: ${cpu_threads}"
+  [[ -n "$cpu_freq" ]] && echo -e "  Max freq   ${cpu_freq}"
+
+  section "Memory"
+  local mem_total mem_type mem_speed
+  mem_total=$(awk '/MemTotal/ {printf "%.1f GB", $2/1024/1024}' /proc/meminfo 2>/dev/null)
+  mem_swap=$(awk '/SwapTotal/ {printf "%.1f GB", $2/1024/1024}' /proc/meminfo 2>/dev/null)
+  echo -e "  RAM        ${mem_total:-unknown}"
+  echo -e "  Swap       ${mem_swap:-none}"
+  # Try dmidecode for RAM type (may need sudo)
+  local ram_info
+  ram_info=$(sudo dmidecode -t memory 2>/dev/null | awk '/Type:/ && !/Unknown|Error/ {print $2; exit}')
+  [[ -n "$ram_info" ]] && echo -e "  Type       ${ram_info}"
+
+  section "Storage"
+  lsblk -d -o NAME,SIZE,TYPE,ROTA,MODEL 2>/dev/null \
+    | awk 'NR==1 {printf "  %-10s %-8s %-5s %s\n", $1,$2,$4,$5}
+           NR>1 && $3!="loop" {
+             rot=$4=="1"?"HDD":"SSD"
+             printf "  %-10s %-8s %-5s %s\n", $1,$2,rot,$5
+           }'
+
+  section "GPU"
+  local gpu
+  gpu=$(lspci 2>/dev/null | grep -iE 'vga|3d|display' | sed 's/.*: //' | head -3)
+  if [[ -n "$gpu" ]]; then
+    echo "$gpu" | while IFS= read -r line; do
+      echo -e "  ${line}"
+    done
+  else
+    echo -e "  ${DIM}Not detected (try: lspci | grep -i vga)${NC}"
+  fi
+
+  section "Network Interfaces"
+  ip -o link show 2>/dev/null | awk '{
+    gsub(/@.*/, "", $2)
+    printf "  %-12s", $2
+    for(i=1;i<=NF;i++) if($i=="link/ether") printf " %s", $(i+1)
+    print ""
+  }'
+  echo ""
+  ip -o -4 addr show 2>/dev/null | awk '{printf "  %-12s %s\n", $2, $4}'
+
+  section "Drivers / Kernel Modules"
+  echo -e "  ${DIM}Top loaded modules:${NC}"
+  lsmod 2>/dev/null | awk 'NR>1 {print $1}' | head -20 \
+    | paste - - - - | awk '{printf "  %-20s %-20s %-20s %-20s\n", $1,$2,$3,$4}'
+
+  echo ""
+}
+
+# ── dashboard ─────────────────────────────────────────────────────────────────
+
+cmd_dashboard() {
+  echo -e "${BOLD}peek${NC} — system inspector\n"
+
+  # Quick vitals
+  local cpu_model mem_total os_name uptime_str
+  cpu_model=$(lscpu 2>/dev/null | awk -F': +' '/Model name/ {print $2; exit}')
+  mem_total=$(awk '/MemTotal/ {printf "%.1f GB", $2/1024/1024}' /proc/meminfo)
+  mem_avail=$(awk '/MemAvailable/ {printf "%.1f GB", $2/1024/1024}' /proc/meminfo)
+  os_name=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2)
+  uptime_str=$(uptime -p 2>/dev/null | sed 's/up //')
+  load=$(cut -d' ' -f1-3 /proc/loadavg)
+
+  echo -e "  ${CYAN}OS${NC}       ${os_name}"
+  echo -e "  ${CYAN}CPU${NC}      ${cpu_model}"
+  echo -e "  ${CYAN}Memory${NC}   ${mem_avail} free of ${mem_total}"
+  echo -e "  ${CYAN}Uptime${NC}   ${uptime_str}"
+  echo -e "  ${CYAN}Load${NC}     ${load}"
+
+  echo -e "\n${CYAN}${BOLD}Listening ports${NC}"
+  echo -e "${DIM}$(printf '%.0s─' {1..40})${NC}"
+  get_ports | awk -F'\t' '{printf "  %-6s %-7s %s\n", $1, $2, $3}' | head -15
+
+  local total
+  total=$(get_ports | wc -l)
+  [[ "$total" -gt 15 ]] && echo -e "  ${DIM}... and $((total-15)) more — run: peek ports${NC}"
+
+  echo -e "\n  Run ${BOLD}peek ports${NC} or ${BOLD}peek sysinfo${NC} for more detail."
+  echo ""
+}
+
+cmd_help() {
+  echo -e "${BOLD}peek${NC} — system inspector\n"
+  echo -e "${BOLD}Usage:${NC}"
+  echo "  peek                 dashboard (ports summary + key specs)"
+  echo "  peek ports           browse all listening ports"
+  echo "  peek ports <num>     check a specific port number"
+  echo "  peek sysinfo         full static system info (CPU, RAM, disk, GPU...)"
+  echo ""
+  echo -e "${BOLD}In port browser:${NC}"
+  echo "  ctrl-k    kill the process on the selected port"
+}
+
+# ── dispatch ──────────────────────────────────────────────────────────────────
+
+case "$1" in
+  ports)   shift; cmd_ports "$@" ;;
+  sysinfo) cmd_sysinfo ;;
+  help|--help|-h) cmd_help ;;
+  "")      cmd_dashboard ;;
+  *)       echo -e "${RED}Unknown:${NC} $1\n"; cmd_help ;;
+esac

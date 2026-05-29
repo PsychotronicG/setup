@@ -1,0 +1,9 @@
+# Base profile — tools for any machine
+fzf
+ripgrep
+bat
+eza
+zoxide
+dev
+cl
+peek

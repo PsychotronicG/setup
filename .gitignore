@@ -1,0 +1,7 @@
+# machine-specific state
+.active_profile
+dev/recent
+
+# python
+__pycache__/
+*.pyc

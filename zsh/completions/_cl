@@ -1,0 +1,37 @@
+#compdef cl
+
+_cl() {
+  local -a tools
+  tools=($(ls "${HOME}/.setup/cmd-lib"/*.yaml 2>/dev/null | sed 's|.*/||;s|\.yaml$||'))
+
+  case $CURRENT in
+    2)
+      local -a builtins
+      builtins=(add tools edit help)
+      compadd -a builtins
+      compadd -a tools
+      ;;
+    3)
+      case $words[2] in
+        edit)
+          compadd -a tools
+          ;;
+        add)
+          compadd last
+          compadd -a tools
+          ;;
+        *)
+          local tool="$words[2]"
+          local yaml="${HOME}/.setup/cmd-lib/${tool}.yaml"
+          if [[ -f "$yaml" ]]; then
+            local -a cats
+            cats=($(python3 "${HOME}/.setup/cmd-lib/lib.py" categories "$yaml" 2>/dev/null))
+            compadd -a cats
+          fi
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_cl "$@"

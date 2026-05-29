@@ -1,0 +1,65 @@
+branches:
+  - name: list local branches
+    command: git branch
+  - name: list remote branches
+    command: git branch -r
+  - name: list all branches
+    command: git branch -a
+  - name: create and switch to branch
+    command: git checkout -b {branch_name}
+  - name: switch to existing branch
+    command: git checkout {branch_name}
+  - name: delete local branch
+    command: git branch -d {branch_name}
+  - name: force delete local branch
+    command: git branch -D {branch_name}
+  - name: rename current branch
+    command: git branch -m {new_name}
+  - name: push branch to remote
+    command: git push -u origin {branch_name}
+
+commits:
+  - name: amend last commit message
+    command: git commit --amend -m "{message}"
+  - name: undo last commit (keep changes staged)
+    command: git reset --soft HEAD~1
+  - name: undo last commit (unstage changes)
+    command: git reset HEAD~1
+  - name: pretty log graph
+    command: git log --oneline --graph --decorate
+  - name: show changes in last commit
+    command: git show --stat HEAD
+  - name: cherry pick commit
+    command: git cherry-pick {commit_hash}
+
+remote:
+  - name: list remotes
+    command: git remote -v
+  - name: add remote origin
+    command: git remote add origin {url}
+  - name: fetch and prune remote branches
+    command: git fetch --prune
+  - name: pull with rebase
+    command: git pull --rebase
+
+stash:
+  - name: stash current changes
+    command: git stash
+  - name: stash with message
+    command: git stash push -m "{message}"
+  - name: list stashes
+    command: git stash list
+  - name: apply and drop latest stash
+    command: git stash pop
+  - name: drop a stash
+    command: git stash drop stash@{{stash_index}}
+
+misc:
+  - name: show all local changes
+    command: git diff
+  - name: show staged changes
+    command: git diff --staged
+  - name: discard changes in file
+    command: git checkout -- {file}
+  - name: find which commit introduced a string
+    command: git log -S "{search_string}" --oneline

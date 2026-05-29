@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+
+DEV_ROOT="${HOME}/repos"
+SETUP_DIR="${HOME}/.setup"
+TEMPLATES_DIR="${SETUP_DIR}/dev/templates"
+RECENT_FILE="${SETUP_DIR}/dev/recent"
+CATEGORIES=("sandbox" "learning" "projects" "archive")
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+is_category() {
+  local name="$1"
+  for cat in "${CATEGORIES[@]}"; do
+    [[ "$name" == "$cat" ]] && return 0
+  done
+  return 1
+}
+
+list_repos() {
+  for cat in "${CATEGORIES[@]}"; do
+    local cat_dir="${DEV_ROOT}/${cat}"
+    [[ -d "$cat_dir" ]] || continue
+    for repo in "${cat_dir}"/*/; do
+      [[ -d "$repo" ]] || continue
+      echo "${cat}/$(basename "$repo")"
+    done
+  done
+  for entry in "${DEV_ROOT}"/*/; do
+    [[ -d "$entry" ]] || continue
+    local name
+    name=$(basename "$entry")
+    is_category "$name" && continue
+    echo "uncategorized/${name}"
+  done
+}
+
+resolve_path() {
+  local selection="$1"
+  local category="${selection%%/*}"
+  local name="${selection##*/}"
+  if [[ "$category" == "uncategorized" ]]; then
+    echo "${DEV_ROOT}/${name}"
+  else
+    echo "${DEV_ROOT}/${category}/${name}"
+  fi
+}
+
+pick_template() {
+  local templates=()
+  for f in "${TEMPLATES_DIR}"/*.sh; do
+    [[ -f "$f" ]] || continue
+    templates+=("$(basename "$f" .sh)")
+  done
+  if [[ ${#templates[@]} -eq 1 ]]; then
+    echo "${templates[0]}"
+    return
+  fi
+  printf '%s\n' "${templates[@]}" | fzf --prompt="  Template > " --height=10 --border=rounded
+}
+
+log_recent() {
+  local path="$1"
+  mkdir -p "$(dirname "$RECENT_FILE")"
+  echo "$path" >> "$RECENT_FILE"
+}
+
+open_repo() {
+  local repo_path="$1"
+  local session_name
+  session_name=$(basename "$repo_path")
+
+  local template
+  template=$(pick_template)
+  [[ -z "$template" ]] && { echo "Aborted."; exit 0; }
+
+  log_recent "$repo_path"
+  bash "${TEMPLATES_DIR}/${template}.sh" "$session_name" "$repo_path"
+}
+
+# ── commands ─────────────────────────────────────────────────────────────────
+
+cmd_pick() {
+  local selection
+  selection=$(list_repos | fzf \
+    --prompt="  Open > " \
+    --height=40% \
+    --border=rounded \
+    --preview="ls -la $(resolve_path {})" \
+    --preview-window=right:50%
+  )
+  [[ -z "$selection" ]] && exit 0
+  open_repo "$(resolve_path "$selection")"
+}
+
+cmd_new() {
+  local name="$1"
+
+  if [[ -z "$name" ]]; then
+    echo -ne "${BOLD}Project name:${NC} "
+    read -r name
+  fi
+  [[ -z "$name" ]] && { echo "Aborted."; exit 0; }
+
+  local category
+  category=$(printf '%s\n' "${CATEGORIES[@]}" | fzf \
+    --prompt="  Category > " \
+    --height=10 \
+    --border=rounded
+  )
+  [[ -z "$category" ]] && { echo "Aborted."; exit 0; }
+
+  local project_dir="${DEV_ROOT}/${category}/${name}"
+
+  if [[ -d "$project_dir" ]]; then
+    echo -e "${RED}Error:${NC} '${project_dir}' already exists"
+    exit 1
+  fi
+
+  mkdir -p "$project_dir"
+  echo -e "${GREEN}✓${NC}  Created ${BLUE}${project_dir}${NC}"
+
+  echo -ne "Initialize git? [Y/n] "
+  read -r git_init
+  if [[ ! "$git_init" =~ ^[Nn]$ ]]; then
+    git -C "$project_dir" init -q
+    echo -e "${GREEN}✓${NC}  Git initialized"
+  fi
+
+  echo -ne "Open now? [Y/n] "
+  read -r open_now
+  if [[ ! "$open_now" =~ ^[Nn]$ ]]; then
+    open_repo "$project_dir"
+  fi
+}
+
+cmd_clone() {
+  local url="$1"
+  if [[ -z "$url" ]]; then
+    echo -ne "${BOLD}Repository URL:${NC} "
+    read -r url
+  fi
+  [[ -z "$url" ]] && { echo "Aborted."; exit 0; }
+
+  local category
+  category=$(printf '%s\n' "${CATEGORIES[@]}" | fzf \
+    --prompt="  Clone into > " \
+    --height=10 \
+    --border=rounded
+  )
+  [[ -z "$category" ]] && { echo "Aborted."; exit 0; }
+
+  local dest="${DEV_ROOT}/${category}"
+  git clone "$url" "$dest/" || exit 1
+
+  local repo_name
+  repo_name=$(basename "$url" .git)
+
+  echo -ne "Open now? [Y/n] "
+  read -r open_now
+  if [[ ! "$open_now" =~ ^[Nn]$ ]]; then
+    open_repo "${dest}/${repo_name}"
+  fi
+}
+
+cmd_recent() {
+  if [[ ! -f "$RECENT_FILE" ]] || [[ ! -s "$RECENT_FILE" ]]; then
+    echo "No recent projects."
+    exit 0
+  fi
+
+  local selection
+  selection=$(tac "$RECENT_FILE" \
+    | awk '!seen[$0]++' \
+    | head -30 \
+    | fzf \
+      --prompt="  Recent > " \
+      --height=40% \
+      --border=rounded \
+      --preview="ls -la {}" \
+      --preview-window=right:50%
+  )
+  [[ -z "$selection" ]] && exit 0
+
+  if [[ ! -d "$selection" ]]; then
+    echo -e "${RED}Error:${NC} '${selection}' no longer exists"
+    exit 1
+  fi
+
+  open_repo "$selection"
+}
+
+cmd_move() {
+  local selection
+  selection=$(list_repos | fzf \
+    --prompt="  Move > " \
+    --height=40% \
+    --border=rounded
+  )
+  [[ -z "$selection" ]] && exit 0
+
+  local current_category="${selection%%/*}"
+  local repo_name="${selection##*/}"
+  local current_path
+  current_path=$(resolve_path "$selection")
+
+  local new_category
+  new_category=$(printf '%s\n' "${CATEGORIES[@]}" | grep -v "^${current_category}$" | fzf \
+    --prompt="  Move to > " \
+    --height=10 \
+    --border=rounded
+  )
+  [[ -z "$new_category" ]] && exit 0
+
+  local new_path="${DEV_ROOT}/${new_category}/${repo_name}"
+  mv "$current_path" "$new_path"
+  echo -e "${GREEN}✓${NC}  Moved ${BOLD}${repo_name}${NC} → ${BLUE}${new_category}${NC}"
+}
+
+cmd_status() {
+  echo -e "${BOLD}Repos${NC}\n"
+
+  local all_repos
+  all_repos=$(list_repos)
+
+  if [[ -z "$all_repos" ]]; then
+    echo "  No repos found in ${DEV_ROOT}"
+    exit 0
+  fi
+
+  local current_cat=""
+  while IFS= read -r entry; do
+    local cat="${entry%%/*}"
+    local name="${entry##*/}"
+    local path
+    path=$(resolve_path "$entry")
+
+    if [[ "$cat" != "$current_cat" ]]; then
+      [[ -n "$current_cat" ]] && echo ""
+      echo -e "  ${CYAN}${BOLD}${cat}${NC}"
+      current_cat="$cat"
+    fi
+
+    if [[ -d "${path}/.git" ]]; then
+      local branch
+      branch=$(git -C "$path" branch --show-current 2>/dev/null || echo "?")
+      local changes
+      changes=$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+      local unpushed
+      unpushed=$(git -C "$path" log --oneline "@{u}..HEAD" 2>/dev/null | wc -l | tr -d ' ')
+
+      local flags=""
+      [[ "$changes" -gt 0 ]]   && flags+=" ${YELLOW}~${changes}${NC}"
+      [[ "$unpushed" -gt 0 ]]  && flags+=" ${GREEN}↑${unpushed}${NC}"
+
+      printf "    %-30s ${DIM}%s${NC}%b\n" "$name" "$branch" "$flags"
+    else
+      printf "    %-30s ${DIM}no git${NC}\n" "$name"
+    fi
+  done <<< "$all_repos"
+
+  echo ""
+}
+
+cmd_switch() {
+  local session
+  session=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | fzf \
+    --prompt="  Switch > " \
+    --height=20 \
+    --border=rounded
+  )
+  [[ -z "$session" ]] && exit 0
+
+  if [[ -n "$TMUX" ]]; then
+    tmux switch-client -t "$session"
+  else
+    tmux attach-session -t "$session"
+  fi
+}
+
+cmd_mkdir() {
+  echo -ne "${BOLD}New category name:${NC} "
+  read -r name
+  [[ -z "$name" ]] && { echo "Aborted."; exit 0; }
+
+  local dir="${DEV_ROOT}/${name}"
+  if [[ -d "$dir" ]]; then
+    echo -e "${YELLOW}Already exists:${NC} ${dir}"
+    exit 0
+  fi
+
+  mkdir -p "$dir"
+  echo -e "${GREEN}✓${NC}  Created category ${BLUE}${name}${NC}"
+  echo -e "   Add it to CATEGORIES in ${BOLD}~/.setup/bin/dev${NC} to include it in listings."
+}
+
+cmd_help() {
+  echo -e "${BOLD}dev${NC} — repo manager\n"
+  echo -e "${BOLD}Usage:${NC}"
+  echo "  dev                  pick and open a repo"
+  echo "  dev new [name]       create a new project"
+  echo "  dev clone [url]      clone a repo into a category"
+  echo "  dev recent           pick from recently opened repos"
+  echo "  dev move             move a repo to a different category"
+  echo "  dev status           git status overview of all repos"
+  echo "  dev switch           switch between open tmux sessions"
+  echo "  dev mkdir            create a new category folder"
+  echo ""
+  echo -e "${BOLD}Repos:${NC} ${DEV_ROOT}"
+  echo -e "${BOLD}Categories:${NC} ${CATEGORIES[*]}"
+}
+
+# ── dispatch ─────────────────────────────────────────────────────────────────
+
+case "$1" in
+  new)     shift; cmd_new "$@" ;;
+  clone)   shift; cmd_clone "$@" ;;
+  recent)  cmd_recent ;;
+  move)    cmd_move ;;
+  status)  cmd_status ;;
+  switch)  cmd_switch ;;
+  mkdir)   cmd_mkdir ;;
+  help|--help|-h) cmd_help ;;
+  "")      cmd_pick ;;
+  *)       echo -e "${RED}Unknown command:${NC} $1\n"; cmd_help ;;
+esac
