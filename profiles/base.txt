@@ -7,3 +7,5 @@ zoxide
 dev
 cl
 peek
+seek
+ast-grep

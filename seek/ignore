@@ -1,0 +1,19 @@
+# seek ignore list — directories to skip when searching
+# One entry per line. Lines starting with # are ignored.
+# These become --exclude flags for fd, and -not -path pruning for find.
+
+tradehub-data
+mrkdata_parquet
+mrkdata_candles
+Downloads
+snap
+virtuals
+.cache
+.steam
+.local
+.nvm
+.npm
+.var
+.wine
+.vscode
+.copilot
