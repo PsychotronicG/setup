@@ -1,5 +1,6 @@
 NAME="ast-grep"
 DESC="Structural code search and rewrite tool (ast-grep)"
+CATEGORY="search"
 
 check() {
   command -v ast-grep &>/dev/null

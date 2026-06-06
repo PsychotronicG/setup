@@ -1,5 +1,6 @@
 NAME="fzf"
 DESC="Fuzzy finder for the terminal"
+CATEGORY="shell"
 
 check() {
   command -v fzf &>/dev/null

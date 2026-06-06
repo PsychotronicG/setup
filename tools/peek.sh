@@ -1,5 +1,6 @@
 NAME="peek"
 DESC="System inspector — ports, sysinfo, dashboard (local script)"
+CATEGORY="dev"
 
 check() {
   command -v peek &>/dev/null

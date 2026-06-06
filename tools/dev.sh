@@ -1,5 +1,6 @@
 NAME="dev"
 DESC="Repo manager (local script)"
+CATEGORY="dev"
 
 check() {
   command -v dev &>/dev/null

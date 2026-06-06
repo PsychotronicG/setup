@@ -1,5 +1,6 @@
 NAME="eza"
 DESC="Modern replacement for ls"
+CATEGORY="shell"
 
 check() {
   command -v eza &>/dev/null

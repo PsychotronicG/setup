@@ -36,10 +36,141 @@ load_tool() {
   if [[ ! -f "$tool_file" ]]; then
     return 1
   fi
-  # Unset functions from previous tool load
   unset -f check install 2>/dev/null
   source "$tool_file"
 }
+
+# --- Profile picker helpers ---
+
+# Show a fzf category list. Prints chosen category key to stdout; returns 1 on ESC.
+_rig_pick_category() {
+  local tmpfile="$1" prompt="${2:-profile}"
+
+  local -A cat_total cat_sel
+  for f in "${TOOLS_DIR}"/*.sh; do
+    [[ -f "$f" ]] || continue
+    local tname cat
+    tname=$(basename "$f" .sh)
+    cat=$(grep '^CATEGORY=' "$f" | cut -d'"' -f2)
+    [[ -z "$cat" ]] && cat="other"
+    cat_total[$cat]=$(( ${cat_total[$cat]:-0} + 1 ))
+    grep -qx "$tname" "$tmpfile" 2>/dev/null && \
+      cat_sel[$cat]=$(( ${cat_sel[$cat]:-0} + 1 ))
+  done
+
+  local lines=("__save__"$'\t'"[ ✓  Save profile ]")
+  for cat in $(printf '%s\n' "${!cat_total[@]}" | sort); do
+    local total=${cat_total[$cat]}
+    local sel=${cat_sel[$cat]:-0}
+    lines+=("${cat}"$'\t'"${cat}   (${sel} / ${total})")
+  done
+
+  local result
+  result=$(printf '%s\n' "${lines[@]}" | fzf \
+    --delimiter=$'\t' \
+    --with-nth=2 \
+    --prompt="  [${prompt}] > " \
+    --header="enter: open category   esc: cancel" \
+    --height=50% \
+    --border=rounded \
+    --pointer=" " \
+  )
+  [[ $? -ne 0 ]] && return 1
+  echo "$result" | cut -f1
+}
+
+# Show tools in one category with multi-select. Applies changes to tmpfile on Enter; no-op on ESC.
+_rig_pick_tools_in_category() {
+  local category="$1" tmpfile="$2"
+
+  local sel_tools=() unsel_tools=()
+  for f in "${TOOLS_DIR}"/*.sh; do
+    [[ -f "$f" ]] || continue
+    local tname cat
+    tname=$(basename "$f" .sh)
+    cat=$(grep '^CATEGORY=' "$f" | cut -d'"' -f2)
+    [[ -z "$cat" ]] && cat="other"
+    [[ "$cat" != "$category" ]] && continue
+    if grep -qx "$tname" "$tmpfile" 2>/dev/null; then
+      sel_tools+=("$tname")
+    else
+      unsel_tools+=("$tname")
+    fi
+  done
+
+  local all_tools=("${sel_tools[@]}" "${unsel_tools[@]}")
+  local n_presel=${#sel_tools[@]}
+
+  local lines=()
+  for tname in "${all_tools[@]}"; do
+    local desc
+    desc=$(grep '^DESC=' "${TOOLS_DIR}/${tname}.sh" | cut -d'"' -f2)
+    lines+=("○ ${tname}"$'\t'"${desc}")
+  done
+
+  local bind_arg="tab:toggle"
+  if [[ $n_presel -gt 0 ]]; then
+    local preselect="start:pos(1)+select"
+    for ((i=2; i<=n_presel; i++)); do
+      preselect+="+pos($i)+select"
+    done
+    preselect+="+pos(1)"
+    bind_arg+=",${preselect}"
+  fi
+
+  local selected
+  selected=$(printf '%s\n' "${lines[@]}" | fzf \
+    --multi \
+    --sync \
+    --delimiter=$'\t' \
+    --with-nth=1,2 \
+    --prompt="  [${category}] > " \
+    --header="tab: toggle   enter: back to categories   esc: back (no changes)" \
+    --height=80% \
+    --border=rounded \
+    --marker="✓ " \
+    --pointer=" " \
+    --color="marker:10" \
+    --bind="$bind_arg"
+  )
+  [[ $? -ne 0 ]] && return 1  # ESC → discard
+
+  # Replace this category's tools in tmpfile with the new selection
+  local tmp2
+  tmp2=$(mktemp)
+  while IFS= read -r t; do
+    [[ -z "$t" ]] && continue
+    local f="${TOOLS_DIR}/${t}.sh"
+    local cat
+    [[ -f "$f" ]] && cat=$(grep '^CATEGORY=' "$f" | cut -d'"' -f2)
+    [[ -z "$cat" ]] && cat="other"
+    [[ "$cat" == "$category" ]] && continue
+    echo "$t"
+  done < "$tmpfile" > "$tmp2"
+
+  if [[ -n "$selected" ]]; then
+    while IFS=$'\t' read -r display _; do
+      echo "${display#○ }"
+    done <<< "$selected" >> "$tmp2"
+  fi
+
+  mv "$tmp2" "$tmpfile"
+}
+
+# Main category picker loop. Returns 0 on save, 1 on cancel.
+_rig_profile_picker() {
+  local tmpfile="$1" prompt="${2:-profile}"
+
+  while true; do
+    local chosen
+    chosen=$(_rig_pick_category "$tmpfile" "$prompt")
+    [[ $? -ne 0 ]] && return 1        # ESC on category screen → cancel
+    [[ "$chosen" == "__save__" ]] && return 0   # Save chosen
+    _rig_pick_tools_in_category "$chosen" "$tmpfile"
+  done
+}
+
+# --- Core commands ---
 
 cmd_doctor() {
   local profile
@@ -153,44 +284,20 @@ cmd_profile() {
         exit 1
       fi
 
-      local lines=()
-      for f in "${TOOLS_DIR}"/*.sh; do
-        [[ -f "$f" ]] || continue
-        local tname desc
-        tname=$(basename "$f" .sh)
-        desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
-        lines+=("○ ${tname}"$'\t'"${desc}")
-      done
+      local tmpfile
+      tmpfile=$(mktemp)
 
-      local selected
-      selected=$(printf '%s\n' "${lines[@]}" | fzf \
-        --multi \
-        --delimiter=$'\t' \
-        --with-nth=1,2 \
-        --prompt="  [${name}] > " \
-        --header="tab: toggle   enter: confirm   esc: cancel" \
-        --height=80% \
-        --border=rounded \
-        --marker="✓ " \
-        --pointer=" " \
-        --color="marker:10" \
-        --bind="tab:toggle"
-      )
-
-      if [[ -z "$selected" ]]; then
+      if ! _rig_profile_picker "$tmpfile" "$name"; then
+        rm -f "$tmpfile"
         echo "Aborted."
         exit 0
       fi
 
-      {
-        echo "# Profile: ${name}"
-        while IFS=$'\t' read -r display_name _; do
-          echo "${display_name#○ }"
-        done <<< "$selected"
-      } > "$profile_file"
-
       local count
-      count=$(echo "$selected" | wc -l)
+      count=$(grep -c . "$tmpfile")
+      { echo "# Profile: ${name}"; cat "$tmpfile"; } > "$profile_file"
+      rm -f "$tmpfile"
+
       echo -e "\n${GREEN}✓${NC}  Profile '${name}' created with ${count} tool(s)"
       echo -e "   Run ${BOLD}rig profile use ${name}${NC} to activate it."
       ;;
@@ -202,79 +309,21 @@ cmd_profile() {
         exit 1
       fi
 
-      # Load tools currently in the profile
-      local current_tools=()
-      while IFS= read -r tool; do
-        [[ -z "$tool" ]] && continue
-        current_tools+=("$tool")
-      done < <(get_profile_tools "$name")
+      local tmpfile
+      tmpfile=$(mktemp)
+      get_profile_tools "$name" > "$tmpfile"
 
-      # Build display list: current tools first, then the rest
-      local lines=()
-      local seen=()
-      for tool in "${current_tools[@]}"; do
-        local desc=""
-        local f="${TOOLS_DIR}/${tool}.sh"
-        [[ -f "$f" ]] && desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
-        lines+=("○ ${tool}"$'\t'"${desc}")
-        seen+=("$tool")
-      done
-      for f in "${TOOLS_DIR}"/*.sh; do
-        [[ -f "$f" ]] || continue
-        local tname
-        tname=$(basename "$f" .sh)
-        local skip=0
-        for s in "${seen[@]}"; do [[ "$s" == "$tname" ]] && { skip=1; break; }; done
-        [[ $skip -eq 1 ]] && continue
-        local desc
-        desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
-        lines+=("○ ${tname}"$'\t'"${desc}")
-      done
-
-      # Pre-select the first N items (the current profile tools) on start.
-      # --sync ensures all items are loaded before start fires.
-      # pos(n) jumps explicitly to a position rather than using relative down navigation.
-      local n=${#current_tools[@]}
-      local bind_arg="tab:toggle"
-      if [[ $n -gt 0 ]]; then
-        local preselect="start:pos(1)+select"
-        for ((i=2; i<=n; i++)); do
-          preselect+="+pos($i)+select"
-        done
-        preselect+="+pos(1)"
-        bind_arg+=",${preselect}"
-      fi
-
-      local selected
-      selected=$(printf '%s\n' "${lines[@]}" | fzf \
-        --multi \
-        --sync \
-        --delimiter=$'\t' \
-        --with-nth=1,2 \
-        --prompt="  [${name}] > " \
-        --header="tab: toggle   enter: save   esc: cancel" \
-        --height=80% \
-        --border=rounded \
-        --marker="✓ " \
-        --pointer=" " \
-        --color="marker:10" \
-        --bind="$bind_arg"
-      )
-
-      if [[ -z "$selected" ]]; then
+      if ! _rig_profile_picker "$tmpfile" "$name"; then
+        rm -f "$tmpfile"
         echo "Aborted."
         exit 0
       fi
 
-      {
-        echo "# Profile: ${name}"
-        while IFS=$'\t' read -r display_name _; do
-          echo "${display_name#○ }"
-        done <<< "$selected"
-      } > "$profile_file"
-
       local count
-      count=$(echo "$selected" | wc -l)
+      count=$(grep -c . "$tmpfile")
+      { echo "# Profile: ${name}"; cat "$tmpfile"; } > "$profile_file"
+      rm -f "$tmpfile"
+
       echo -e "\n${GREEN}✓${NC}  Profile '${name}' updated (${count} tool(s))"
       ;;
     *)

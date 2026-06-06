@@ -1,5 +1,6 @@
 NAME="modport"
 DESC="Mod hub for all your games"
+CATEGORY="apps"
 
 check() {
   command -v modport &>/dev/null

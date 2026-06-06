@@ -1,5 +1,6 @@
 NAME="bat"
 DESC="A cat clone with syntax highlighting"
+CATEGORY="shell"
 
 check() {
   command -v bat &>/dev/null || command -v batcat &>/dev/null

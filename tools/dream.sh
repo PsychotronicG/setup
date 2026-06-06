@@ -1,5 +1,6 @@
 NAME="dream"
 DESC="Dream journal CLI"
+CATEGORY="apps"
 
 check() {
   command -v dream &>/dev/null

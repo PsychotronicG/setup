@@ -1,5 +1,6 @@
 NAME="zoxide"
 DESC="Smarter cd — jumps to frequently used directories"
+CATEGORY="shell"
 
 check() {
   command -v zoxide &>/dev/null

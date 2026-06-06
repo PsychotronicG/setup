@@ -1,5 +1,6 @@
 NAME="cl"
 DESC="Command library (local script)"
+CATEGORY="dev"
 
 check() {
   command -v cl &>/dev/null

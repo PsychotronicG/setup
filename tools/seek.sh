@@ -1,5 +1,6 @@
 NAME="seek"
 DESC="Fuzzy file & code search (bat, rg, ast-grep)"
+CATEGORY="search"
 
 check() {
   command -v seek &>/dev/null

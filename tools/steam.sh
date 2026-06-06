@@ -1,5 +1,6 @@
 NAME="steam"
 DESC="Steam game launcher"
+CATEGORY="apps"
 
 check() {
   command -v steam &>/dev/null || [[ -d "/Applications/Steam.app" ]]
