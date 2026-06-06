@@ -15,14 +15,23 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-find_dlc_dir() {
+find_game_dir() {
   for path in "${STEAM_PATHS[@]}"; do
-    if [[ -d "$path" ]]; then
-      echo "$path/Assets/DLC"
-      return 0
-    fi
+    [[ -d "$path" ]] && echo "$path" && return 0
   done
   return 1
+}
+
+find_dlc_dir() {
+  local game_dir
+  game_dir=$(find_game_dir) || return 1
+  echo "$game_dir/Assets/DLC"
+}
+
+find_maps_dir() {
+  local game_dir
+  game_dir=$(find_game_dir) || return 1
+  echo "$game_dir/Assets/Maps"
 }
 
 get_installed_version() {
@@ -74,8 +83,9 @@ cmd_install() {
     return 0
   fi
 
-  dlc_dir=$(find_dlc_dir)
-  if [[ -z "$dlc_dir" ]]; then
+  local game_dir dlc_dir maps_dir
+  game_dir=$(find_game_dir)
+  if [[ -z "$game_dir" ]]; then
     echo -e "${RED}✗${NC}  Civ 5 not found. Is the game installed?"
     echo "   Searched:"
     for p in "${STEAM_PATHS[@]}"; do
@@ -83,6 +93,8 @@ cmd_install() {
     done
     return 1
   fi
+  dlc_dir="$game_dir/Assets/DLC"
+  maps_dir="$game_dir/Assets/Maps"
 
   # Prefer an explicit release asset (.zip), fall back to repo zipball
   asset_url=$(echo "$release" | grep '"browser_download_url"' | grep '\.zip' | head -1 | cut -d'"' -f4)
@@ -101,36 +113,48 @@ cmd_install() {
   echo -e "${BLUE}→${NC}  Extracting..."
   unzip -q "${tmp_dir}/lekmod.zip" -d "${tmp_dir}/extracted"
 
-  # Locate the LEKMOD folder — either a release asset with it at root,
-  # or the repo zipball where it lives one level in under EnormousApplePie-Lekmod-<hash>/
-  local lekmod_src
+  # Both LEKMOD and Lekmap live under the repo root (one level in for zipball)
+  local lekmod_src lekmap_src
   lekmod_src=$(find "${tmp_dir}/extracted" -maxdepth 2 -type d -iname "LEKMOD" | head -1)
+  lekmap_src=$(find "${tmp_dir}/extracted" -maxdepth 2 -type d -iname "Lekmap" | head -1)
 
   if [[ -z "$lekmod_src" ]]; then
     echo -e "${RED}✗${NC}  Could not find LEKMOD folder inside zip"
     return 1
   fi
 
-  # Remove previous LEKMOD install(s)
+  # Install LEKMOD → Assets/DLC/
   find "$dlc_dir" -maxdepth 1 -type d -iname "LEKMOD*" -exec rm -rf {} + 2>/dev/null || true
-
-  local dest="${dlc_dir}/LEKMOD_${latest_tag}"
+  local dlc_dest="${dlc_dir}/LEKMOD_${latest_tag}"
   mkdir -p "$dlc_dir"
-  cp -r "$lekmod_src" "$dest"
+  cp -r "$lekmod_src" "$dlc_dest"
 
   # v33+ ships linux_ui_check.sh to wire up the correct UI files
-  if [[ -f "${dest}/linux_ui_check.sh" ]]; then
+  if [[ -f "${dlc_dest}/linux_ui_check.sh" ]]; then
     echo -e "${BLUE}→${NC}  Running UI check..."
-    bash "${dest}/linux_ui_check.sh"
+    bash "${dlc_dest}/linux_ui_check.sh"
+  fi
+
+  echo -e "${GREEN}✓${NC}  LekMod ${latest_tag} installed"
+  echo -e "   ${dlc_dest}"
+
+  # Install Lekmap → Assets/Maps/
+  if [[ -n "$lekmap_src" ]]; then
+    find "$maps_dir" -maxdepth 1 -type d -iname "Lekmap*" -exec rm -rf {} + 2>/dev/null || true
+    local maps_dest="${maps_dir}/Lekmap_${latest_tag}"
+    mkdir -p "$maps_dir"
+    cp -r "$lekmap_src" "$maps_dest"
+    echo -e "${GREEN}✓${NC}  Lekmap ${latest_tag} installed"
+    echo -e "   ${maps_dest}"
+  else
+    echo -e "${YELLOW}!${NC}  Lekmap not found in zip — skipping"
   fi
 
   echo "$latest_tag" > "$VERSION_FILE"
-  echo -e "${GREEN}✓${NC}  LekMod ${latest_tag} installed"
-  echo -e "   ${dest}"
 }
 
 cmd_help() {
-  echo -e "${BOLD}lekmod-update${NC} — LekMod auto-updater for Civ 5"
+  echo -e "${BOLD}lekmod-update${NC} — LekMod + Lekmap auto-updater for Civ 5"
   echo ""
   echo -e "${BOLD}Usage:${NC}"
   echo "  lekmod-update check     check for a new release"
