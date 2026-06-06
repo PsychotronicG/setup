@@ -239,35 +239,72 @@ cmd_doctor() {
 
   echo -e "${BOLD}OS:${NC}      ${RIG_OS_PRETTY} (${RIG_PKG_MANAGER})"
   echo -e "${BOLD}Profile:${NC} ${profile}"
-  echo ""
 
   local tools
   tools=$(get_profile_tools "$profile") || exit 1
 
-  local installed=0 missing=0 unknown=0
+  # First pass — collect all tool data so we can group by category
+  local -a t_names=() t_cats=() t_statuses=() t_locations=()
 
   while IFS= read -r tool; do
     [[ -z "$tool" ]] && continue
+    t_names+=("$tool")
     if ! load_tool "$tool"; then
-      echo -e "  ${YELLOW}?${NC}  $(printf '%-18s' "$tool") ${YELLOW}(no installer defined)${NC}"
-      ((unknown++))
+      t_cats+=("other"); t_statuses+=("unknown"); t_locations+=("")
       continue
     fi
+    t_cats+=("${CATEGORY:-other}")
     if check 2>/dev/null; then
       local binary="${BINARY:-$NAME}"
-      local location
-      location=$(command -v "$binary" 2>/dev/null || command -v "$tool" 2>/dev/null || echo "(installed)")
-      echo -e "  ${GREEN}✓${NC}  $(printf '%-18s' "$tool") ${DIM}${location}${NC}"
-      ((installed++))
+      local loc
+      loc=$(command -v "$binary" 2>/dev/null || command -v "$tool" 2>/dev/null || echo "(installed)")
+      t_statuses+=("ok"); t_locations+=("$loc")
     else
-      echo -e "  ${RED}✗${NC}  $(printf '%-18s' "$tool") ${DIM:-}(not installed)${NC}"
-      ((missing++))
+      t_statuses+=("missing"); t_locations+=("")
     fi
   done <<< "$tools"
+
+  # Collect unique sorted categories
+  local -a cats=()
+  for cat in "${t_cats[@]}"; do
+    local seen=0
+    for c in "${cats[@]:-}"; do [[ "$c" == "$cat" ]] && { seen=1; break; }; done
+    [[ $seen -eq 0 ]] && cats+=("$cat")
+  done
+  IFS=$'\n' cats=($(printf '%s\n' "${cats[@]}" | sort)); unset IFS
+
+  local installed=0 missing=0 unknown=0
+
+  # Second pass — print grouped by category
+  for cat in "${cats[@]}"; do
+    echo ""
+    echo -e "  ${BOLD}${BLUE}${cat}${NC}"
+    echo -e "  ${DIM}$(printf '%.0s─' {1..36})${NC}"
+
+    for i in "${!t_names[@]}"; do
+      [[ "${t_cats[$i]}" != "$cat" ]] && continue
+      local tool="${t_names[$i]}"
+      case "${t_statuses[$i]}" in
+        ok)
+          echo -e "    ${GREEN}✓${NC}  $(printf '%-18s' "$tool") ${DIM}${t_locations[$i]}${NC}"
+          ((installed++))
+          ;;
+        missing)
+          echo -e "    ${RED}✗${NC}  $(printf '%-18s' "$tool") ${DIM}(not installed)${NC}"
+          ((missing++))
+          ;;
+        unknown)
+          echo -e "    ${YELLOW}?${NC}  $(printf '%-18s' "$tool") ${YELLOW}(no installer)${NC}"
+          ((unknown++))
+          ;;
+      esac
+    done
+  done
 
   echo ""
   echo -e "  ${GREEN}${installed} installed${NC}  ${RED}${missing} missing${NC}  ${YELLOW}${unknown} unknown${NC}"
   [[ $missing -gt 0 ]] && echo -e "\n  Run ${BOLD}rig install${NC} to install missing tools."
+  return 0
 }
 
 cmd_install() {
