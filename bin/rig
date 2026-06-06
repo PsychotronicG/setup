@@ -231,14 +231,17 @@ cmd_profile() {
         lines+=("○ ${tname}"$'\t'"${desc}")
       done
 
-      # Pre-select the first N items (the current profile tools) on start
+      # Pre-select the first N items (the current profile tools) after load
       local n=${#current_tools[@]}
-      local bind_str="start:first"
-      for ((i=1; i<=n; i++)); do
-        [[ $i -gt 1 ]] && bind_str+="+down"
-        bind_str+="+select"
-      done
-      [[ $n -gt 0 ]] && bind_str+="+first"
+      local bind_arg="tab:toggle"
+      if [[ $n -gt 0 ]]; then
+        local preselect="load:first+select"
+        for ((i=2; i<=n; i++)); do
+          preselect+="+down+select"
+        done
+        preselect+="+first"
+        bind_arg+=",${preselect}"
+      fi
 
       local selected
       selected=$(printf '%s\n' "${lines[@]}" | fzf \
@@ -252,7 +255,7 @@ cmd_profile() {
         --marker="✓ " \
         --pointer=" " \
         --color="marker:10" \
-        --bind="tab:toggle,$bind_str"
+        --bind="$bind_arg"
       )
 
       if [[ -z "$selected" ]]; then
