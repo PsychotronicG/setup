@@ -12,6 +12,70 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# --- OS detection ---
+
+RIG_OS=""
+RIG_OS_PRETTY=""
+RIG_PKG_MANAGER=""
+RIG_PKG_INSTALL=""
+
+_detect_os() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    RIG_OS="macos"
+    RIG_OS_PRETTY="macOS"
+    RIG_PKG_MANAGER="brew"
+    RIG_PKG_INSTALL="brew install"
+    export RIG_OS RIG_OS_PRETTY RIG_PKG_MANAGER RIG_PKG_INSTALL
+    return
+  fi
+
+  if [[ -f /etc/os-release ]]; then
+    local id id_like pretty
+    id=$(grep    '^ID='          /etc/os-release | cut -d= -f2 | tr -d '"')
+    id_like=$(grep '^ID_LIKE='   /etc/os-release | cut -d= -f2 | tr -d '"' 2>/dev/null || true)
+    pretty=$(grep '^PRETTY_NAME=' /etc/os-release | cut -d= -f2 | tr -d '"' 2>/dev/null || true)
+    RIG_OS="$id"
+    RIG_OS_PRETTY="${pretty:-$id}"
+
+    _set_pkg_manager() {
+      case "$1" in
+        ubuntu|debian|linuxmint|pop|kali|raspbian)
+          RIG_PKG_MANAGER="apt"; RIG_PKG_INSTALL="sudo apt-get install -y" ;;
+        arch|manjaro|endeavouros|garuda|cachyos|artix)
+          RIG_PKG_MANAGER="pacman"; RIG_PKG_INSTALL="sudo pacman -S --noconfirm" ;;
+        fedora)
+          RIG_PKG_MANAGER="dnf"; RIG_PKG_INSTALL="sudo dnf install -y" ;;
+        opensuse*|sles)
+          RIG_PKG_MANAGER="zypper"; RIG_PKG_INSTALL="sudo zypper install -y" ;;
+        *) return 1 ;;
+      esac
+      return 0
+    }
+
+    if ! _set_pkg_manager "$id"; then
+      for token in $id_like; do
+        _set_pkg_manager "$token" && break
+      done
+    fi
+  fi
+
+  [[ -z "$RIG_PKG_MANAGER" ]] && RIG_PKG_MANAGER="unknown"
+  export RIG_OS RIG_OS_PRETTY RIG_PKG_MANAGER RIG_PKG_INSTALL
+}
+
+pkg_install() {
+  if [[ -z "$RIG_PKG_INSTALL" ]]; then
+    echo -e "${RED}✗${NC}  No package manager detected (OS: ${RIG_OS:-unknown})" >&2
+    return 1
+  fi
+  $RIG_PKG_INSTALL "$@"
+}
+export -f pkg_install
+
+_detect_os
+
+# --- Profile helpers ---
+
 get_active_profile() {
   if [[ -f "$ACTIVE_PROFILE_FILE" ]]; then
     cat "$ACTIVE_PROFILE_FILE"
@@ -42,7 +106,6 @@ load_tool() {
 
 # --- Profile picker helpers ---
 
-# Show a fzf category list. Prints chosen category key to stdout; returns 1 on ESC.
 _rig_pick_category() {
   local tmpfile="$1" prompt="${2:-profile}"
 
@@ -79,7 +142,6 @@ _rig_pick_category() {
   echo "$result" | cut -f1
 }
 
-# Show tools in one category with multi-select. Applies changes to tmpfile on Enter; no-op on ESC.
 _rig_pick_tools_in_category() {
   local category="$1" tmpfile="$2"
 
@@ -133,9 +195,8 @@ _rig_pick_tools_in_category() {
     --color="marker:10" \
     --bind="$bind_arg"
   )
-  [[ $? -ne 0 ]] && return 1  # ESC → discard
+  [[ $? -ne 0 ]] && return 1
 
-  # Replace this category's tools in tmpfile with the new selection
   local tmp2
   tmp2=$(mktemp)
   while IFS= read -r t; do
@@ -157,15 +218,13 @@ _rig_pick_tools_in_category() {
   mv "$tmp2" "$tmpfile"
 }
 
-# Main category picker loop. Returns 0 on save, 1 on cancel.
 _rig_profile_picker() {
   local tmpfile="$1" prompt="${2:-profile}"
-
   while true; do
     local chosen
     chosen=$(_rig_pick_category "$tmpfile" "$prompt")
-    [[ $? -ne 0 ]] && return 1        # ESC on category screen → cancel
-    [[ "$chosen" == "__save__" ]] && return 0   # Save chosen
+    [[ $? -ne 0 ]] && return 1
+    [[ "$chosen" == "__save__" ]] && return 0
     _rig_pick_tools_in_category "$chosen" "$tmpfile"
   done
 }
@@ -176,15 +235,14 @@ cmd_doctor() {
   local profile
   profile=$(get_active_profile)
 
+  echo -e "${BOLD}OS:${NC}      ${RIG_OS_PRETTY} (${RIG_PKG_MANAGER})"
   echo -e "${BOLD}Profile:${NC} ${profile}"
   echo ""
 
   local tools
   tools=$(get_profile_tools "$profile") || exit 1
 
-  local installed=0
-  local missing=0
-  local unknown=0
+  local installed=0 missing=0 unknown=0
 
   while IFS= read -r tool; do
     [[ -z "$tool" ]] && continue
@@ -274,30 +332,19 @@ cmd_profile() {
         echo -ne "${BOLD}Profile name:${NC} "
         read -r name </dev/tty
       fi
-      if [[ -z "$name" ]]; then
-        echo "Aborted."
-        exit 0
-      fi
+      if [[ -z "$name" ]]; then echo "Aborted."; exit 0; fi
       local profile_file="${PROFILES_DIR}/${name}.txt"
       if [[ -f "$profile_file" ]]; then
-        echo -e "${RED}Error:${NC} profile '${name}' already exists"
-        exit 1
+        echo -e "${RED}Error:${NC} profile '${name}' already exists"; exit 1
       fi
 
-      local tmpfile
-      tmpfile=$(mktemp)
-
+      local tmpfile; tmpfile=$(mktemp)
       if ! _rig_profile_picker "$tmpfile" "$name"; then
-        rm -f "$tmpfile"
-        echo "Aborted."
-        exit 0
+        rm -f "$tmpfile"; echo "Aborted."; exit 0
       fi
-
-      local count
-      count=$(grep -c . "$tmpfile")
+      local count; count=$(grep -c . "$tmpfile")
       { echo "# Profile: ${name}"; cat "$tmpfile"; } > "$profile_file"
       rm -f "$tmpfile"
-
       echo -e "\n${GREEN}✓${NC}  Profile '${name}' created with ${count} tool(s)"
       echo -e "   Run ${BOLD}rig profile use ${name}${NC} to activate it."
       ;;
@@ -305,25 +352,17 @@ cmd_profile() {
       local name="${1:-$(get_active_profile)}"
       local profile_file="${PROFILES_DIR}/${name}.txt"
       if [[ ! -f "$profile_file" ]]; then
-        echo -e "${RED}Error:${NC} profile '${name}' not found"
-        exit 1
+        echo -e "${RED}Error:${NC} profile '${name}' not found"; exit 1
       fi
 
-      local tmpfile
-      tmpfile=$(mktemp)
+      local tmpfile; tmpfile=$(mktemp)
       get_profile_tools "$name" > "$tmpfile"
-
       if ! _rig_profile_picker "$tmpfile" "$name"; then
-        rm -f "$tmpfile"
-        echo "Aborted."
-        exit 0
+        rm -f "$tmpfile"; echo "Aborted."; exit 0
       fi
-
-      local count
-      count=$(grep -c . "$tmpfile")
+      local count; count=$(grep -c . "$tmpfile")
       { echo "# Profile: ${name}"; cat "$tmpfile"; } > "$profile_file"
       rm -f "$tmpfile"
-
       echo -e "\n${GREEN}✓${NC}  Profile '${name}' updated (${count} tool(s))"
       ;;
     *)
@@ -334,6 +373,7 @@ cmd_profile() {
 
 cmd_help() {
   echo -e "${BOLD}rig${NC} — portable terminal setup manager"
+  echo -e "${BOLD}OS:${NC}  ${RIG_OS_PRETTY} (${RIG_PKG_MANAGER})"
   echo ""
   echo -e "${BOLD}Usage:${NC}"
   echo "  rig doctor                 check installed tools vs active profile"
