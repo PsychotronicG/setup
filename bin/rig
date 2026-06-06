@@ -159,7 +159,7 @@ cmd_profile() {
         local tname desc
         tname=$(basename "$f" .sh)
         desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
-        lines+=("${tname}"$'\t'"${desc}")
+        lines+=("○ ${tname}"$'\t'"${desc}")
       done
 
       local selected
@@ -168,11 +168,13 @@ cmd_profile() {
         --delimiter=$'\t' \
         --with-nth=1,2 \
         --prompt="  [${name}] > " \
-        --header="space: select   enter: confirm   esc: cancel" \
+        --header="tab: toggle   enter: confirm   esc: cancel" \
         --height=80% \
         --border=rounded \
-        --marker="● " \
-        --pointer="▶ "
+        --marker="✓ " \
+        --pointer=" " \
+        --color="marker:10" \
+        --bind="tab:toggle"
       )
 
       if [[ -z "$selected" ]]; then
@@ -182,8 +184,8 @@ cmd_profile() {
 
       {
         echo "# Profile: ${name}"
-        while IFS=$'\t' read -r tname _; do
-          echo "$tname"
+        while IFS=$'\t' read -r display_name _; do
+          echo "${display_name#○ }"
         done <<< "$selected"
       } > "$profile_file"
 
@@ -214,7 +216,7 @@ cmd_profile() {
         local desc=""
         local f="${TOOLS_DIR}/${tool}.sh"
         [[ -f "$f" ]] && desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
-        lines+=("${tool}"$'\t'"${desc}")
+        lines+=("○ ${tool}"$'\t'"${desc}")
         seen+=("$tool")
       done
       for f in "${TOOLS_DIR}"/*.sh; do
@@ -226,7 +228,7 @@ cmd_profile() {
         [[ $skip -eq 1 ]] && continue
         local desc
         desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
-        lines+=("${tname}"$'\t'"${desc}")
+        lines+=("○ ${tname}"$'\t'"${desc}")
       done
 
       # Pre-select the first N items (the current profile tools) on start
@@ -244,12 +246,13 @@ cmd_profile() {
         --delimiter=$'\t' \
         --with-nth=1,2 \
         --prompt="  [${name}] > " \
-        --header="space: toggle   enter: save   esc: cancel" \
+        --header="tab: toggle   enter: save   esc: cancel" \
         --height=80% \
         --border=rounded \
-        --marker="● " \
-        --pointer="▶ " \
-        --bind="$bind_str"
+        --marker="✓ " \
+        --pointer=" " \
+        --color="marker:10" \
+        --bind="tab:toggle,$bind_str"
       )
 
       if [[ -z "$selected" ]]; then
@@ -259,8 +262,8 @@ cmd_profile() {
 
       {
         echo "# Profile: ${name}"
-        while IFS=$'\t' read -r tname _; do
-          echo "$tname"
+        while IFS=$'\t' read -r display_name _; do
+          echo "${display_name#○ }"
         done <<< "$selected"
       } > "$profile_file"
 
