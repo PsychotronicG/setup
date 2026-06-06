@@ -231,21 +231,24 @@ cmd_profile() {
         lines+=("○ ${tname}"$'\t'"${desc}")
       done
 
-      # Pre-select the first N items (the current profile tools) after load
+      # Pre-select the first N items (the current profile tools) on start.
+      # --sync ensures all items are loaded before start fires.
+      # pos(n) jumps explicitly to a position rather than using relative down navigation.
       local n=${#current_tools[@]}
       local bind_arg="tab:toggle"
       if [[ $n -gt 0 ]]; then
-        local preselect="load:first+select"
+        local preselect="start:pos(1)+select"
         for ((i=2; i<=n; i++)); do
-          preselect+="+down+select"
+          preselect+="+pos($i)+select"
         done
-        preselect+="+first"
+        preselect+="+pos(1)"
         bind_arg+=",${preselect}"
       fi
 
       local selected
       selected=$(printf '%s\n' "${lines[@]}" | fzf \
         --multi \
+        --sync \
         --delimiter=$'\t' \
         --with-nth=1,2 \
         --prompt="  [${name}] > " \
