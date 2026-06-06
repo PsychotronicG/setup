@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 REPO="EnormousApplePie/Lekmod"
+BRANCH="main"
 VERSION_FILE="${HOME}/.setup/.lekmod_version"
 STEAM_PATHS=(
   "${HOME}/.steam/debian-installation/steamapps/common/Sid Meier's Civilization V"
@@ -22,90 +23,68 @@ find_game_dir() {
   return 1
 }
 
-find_dlc_dir() {
-  local game_dir
-  game_dir=$(find_game_dir) || return 1
-  echo "$game_dir/Assets/DLC"
-}
-
-find_maps_dir() {
-  local game_dir
-  game_dir=$(find_game_dir) || return 1
-  echo "$game_dir/Assets/Maps"
-}
-
 get_installed_version() {
   [[ -f "$VERSION_FILE" ]] && cat "$VERSION_FILE"
 }
 
-get_latest_release() {
-  curl -sf "https://api.github.com/repos/${REPO}/releases/latest"
+get_latest_sha() {
+  curl -sf "https://api.github.com/repos/${REPO}/commits/${BRANCH}" \
+    | grep '"sha"' | head -1 | cut -d'"' -f4 | cut -c1-7
 }
 
 cmd_check() {
-  local installed latest_tag release
+  local installed latest
   installed=$(get_installed_version)
-  release=$(get_latest_release)
+  latest=$(get_latest_sha)
 
-  if [[ -z "$release" ]]; then
+  if [[ -z "$latest" ]]; then
     echo -e "${RED}✗${NC}  Could not reach GitHub API"
     return 1
   fi
 
-  latest_tag=$(echo "$release" | grep '"tag_name"' | cut -d'"' -f4)
-
   echo -e "${BOLD}Installed:${NC} ${installed:-none}"
-  echo -e "${BOLD}Latest:${NC}    ${latest_tag}"
+  echo -e "${BOLD}Latest:${NC}    ${latest} (${BRANCH})"
 
-  if [[ "$installed" == "$latest_tag" ]]; then
+  if [[ "$installed" == "$latest" ]]; then
     echo -e "${GREEN}✓${NC}  Already up to date"
   else
-    echo -e "${YELLOW}!${NC}  Update available: ${latest_tag}"
+    echo -e "${YELLOW}!${NC}  Update available"
     echo -e "   Run ${BOLD}lekmod-update install${NC} to update"
   fi
 }
 
 cmd_install() {
-  local release latest_tag asset_url zip_url dlc_dir tmp_dir installed
+  local latest installed game_dir dlc_dir maps_dir tmp_dir
 
   installed=$(get_installed_version)
-  release=$(get_latest_release)
+  latest=$(get_latest_sha)
 
-  if [[ -z "$release" ]]; then
+  if [[ -z "$latest" ]]; then
     echo -e "${RED}✗${NC}  Could not reach GitHub API"
     return 1
   fi
 
-  latest_tag=$(echo "$release" | grep '"tag_name"' | cut -d'"' -f4)
-
-  if [[ "$installed" == "$latest_tag" ]]; then
-    echo -e "${GREEN}✓${NC}  Already on latest version (${latest_tag})"
+  if [[ "$installed" == "$latest" ]]; then
+    echo -e "${GREEN}✓${NC}  Already up to date (${latest})"
     return 0
   fi
 
-  local game_dir dlc_dir maps_dir
   game_dir=$(find_game_dir)
   if [[ -z "$game_dir" ]]; then
     echo -e "${RED}✗${NC}  Civ 5 not found. Is the game installed?"
-    echo "   Searched:"
-    for p in "${STEAM_PATHS[@]}"; do
-      echo "     $p"
-    done
+    for p in "${STEAM_PATHS[@]}"; do echo "     $p"; done
     return 1
   fi
   dlc_dir="$game_dir/Assets/DLC"
   maps_dir="$game_dir/Assets/Maps"
 
-  # Prefer an explicit release asset (.zip), fall back to repo zipball
-  asset_url=$(echo "$release" | grep '"browser_download_url"' | grep '\.zip' | head -1 | cut -d'"' -f4)
-  zip_url="${asset_url:-https://api.github.com/repos/${REPO}/zipball/${latest_tag}}"
-
-  echo -e "${BLUE}→${NC}  Downloading LekMod ${latest_tag}..."
+  echo -e "${BLUE}→${NC}  Downloading LekMod (${BRANCH}@${latest})..."
 
   tmp_dir=$(mktemp -d)
   trap 'rm -rf "$tmp_dir"' EXIT
 
-  if ! curl -sfL "$zip_url" -o "${tmp_dir}/lekmod.zip"; then
+  if ! curl -sfL "https://api.github.com/repos/${REPO}/zipball/${BRANCH}" \
+       -o "${tmp_dir}/lekmod.zip"; then
     echo -e "${RED}✗${NC}  Download failed"
     return 1
   fi
@@ -113,7 +92,6 @@ cmd_install() {
   echo -e "${BLUE}→${NC}  Extracting..."
   unzip -q "${tmp_dir}/lekmod.zip" -d "${tmp_dir}/extracted"
 
-  # Both LEKMOD and Lekmap live under the repo root (one level in for zipball)
   local lekmod_src lekmap_src
   lekmod_src=$(find "${tmp_dir}/extracted" -maxdepth 3 -type d -iname "LEKMOD" | head -1)
   lekmap_src=$(find "${tmp_dir}/extracted" -maxdepth 3 -type d -iname "Lekmap" | head -1)
@@ -125,42 +103,42 @@ cmd_install() {
 
   # Install LEKMOD → Assets/DLC/
   find "$dlc_dir" -maxdepth 1 -type d -iname "LEKMOD*" -exec rm -rf {} + 2>/dev/null || true
-  local dlc_dest="${dlc_dir}/LEKMOD_${latest_tag}"
+  local dlc_dest="${dlc_dir}/LEKMOD_${latest}"
   mkdir -p "$dlc_dir"
   cp -r "$lekmod_src" "$dlc_dest"
 
-  # v33+ ships linux_ui_check.sh to wire up the correct UI files
   if [[ -f "${dlc_dest}/linux_ui_check.sh" ]]; then
     echo -e "${BLUE}→${NC}  Running UI check..."
     bash "${dlc_dest}/linux_ui_check.sh"
   fi
 
-  echo -e "${GREEN}✓${NC}  LekMod ${latest_tag} installed"
+  echo -e "${GREEN}✓${NC}  LekMod installed"
   echo -e "   ${dlc_dest}"
 
   # Install Lekmap → Assets/Maps/
   if [[ -n "$lekmap_src" ]]; then
     find "$maps_dir" -maxdepth 1 -type d -iname "Lekmap*" -exec rm -rf {} + 2>/dev/null || true
-    local maps_dest="${maps_dir}/Lekmap_${latest_tag}"
+    local maps_dest="${maps_dir}/Lekmap_${latest}"
     mkdir -p "$maps_dir"
     cp -r "$lekmap_src" "$maps_dest"
-    echo -e "${GREEN}✓${NC}  Lekmap ${latest_tag} installed"
+    echo -e "${GREEN}✓${NC}  Lekmap installed"
     echo -e "   ${maps_dest}"
   else
     echo -e "${YELLOW}!${NC}  Lekmap not found in zip — skipping"
   fi
 
-  echo "$latest_tag" > "$VERSION_FILE"
+  echo "$latest" > "$VERSION_FILE"
 }
 
 cmd_help() {
   echo -e "${BOLD}lekmod-update${NC} — LekMod + Lekmap auto-updater for Civ 5"
   echo ""
   echo -e "${BOLD}Usage:${NC}"
-  echo "  lekmod-update check     check for a new release"
-  echo "  lekmod-update install   download and install the latest release"
+  echo "  lekmod-update check     check for updates"
+  echo "  lekmod-update install   download and install latest from ${BRANCH}"
   echo "  lekmod-update help      show this help"
   echo ""
+  echo -e "${BOLD}Tracks:${NC} ${REPO}@${BRANCH}"
   echo -e "${BOLD}Version file:${NC} ${VERSION_FILE}"
 }
 
