@@ -10,6 +10,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 # --- OS detection ---
@@ -101,6 +102,7 @@ load_tool() {
     return 1
   fi
   unset -f check install 2>/dev/null
+  unset NAME DESC CATEGORY BINARY 2>/dev/null
   source "$tool_file"
 }
 
@@ -247,15 +249,18 @@ cmd_doctor() {
   while IFS= read -r tool; do
     [[ -z "$tool" ]] && continue
     if ! load_tool "$tool"; then
-      echo -e "  ${YELLOW}?${NC}  ${tool} ${YELLOW}(no installer defined)${NC}"
+      echo -e "  ${YELLOW}?${NC}  $(printf '%-18s' "$tool") ${YELLOW}(no installer defined)${NC}"
       ((unknown++))
       continue
     fi
     if check 2>/dev/null; then
-      echo -e "  ${GREEN}✓${NC}  ${tool}"
+      local binary="${BINARY:-$NAME}"
+      local location
+      location=$(command -v "$binary" 2>/dev/null || command -v "$tool" 2>/dev/null || echo "(installed)")
+      echo -e "  ${GREEN}✓${NC}  $(printf '%-18s' "$tool") ${DIM}${location}${NC}"
       ((installed++))
     else
-      echo -e "  ${RED}✗${NC}  ${tool}"
+      echo -e "  ${RED}✗${NC}  $(printf '%-18s' "$tool") ${DIM:-}(not installed)${NC}"
       ((missing++))
     fi
   done <<< "$tools"
