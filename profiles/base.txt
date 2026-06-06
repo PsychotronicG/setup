@@ -1,6 +1,6 @@
 # Base profile — tools for any machine
 steam
-lekmod
+modport
 fzf
 ripgrep
 bat
