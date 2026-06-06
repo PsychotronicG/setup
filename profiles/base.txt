@@ -1,6 +1,7 @@
 # Base profile — tools for any machine
 steam
 modport
+dream
 fzf
 ripgrep
 bat
