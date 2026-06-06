@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+
+REPO="EnormousApplePie/Lekmod"
+VERSION_FILE="${HOME}/.setup/.lekmod_version"
+STEAM_PATHS=(
+  "${HOME}/.steam/debian-installation/steamapps/common/Sid Meier's Civilization V"
+  "${HOME}/.steam/steam/steamapps/common/Sid Meier's Civilization V"
+  "${HOME}/.local/share/Steam/steamapps/common/Sid Meier's Civilization V"
+)
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+find_dlc_dir() {
+  for path in "${STEAM_PATHS[@]}"; do
+    if [[ -d "$path" ]]; then
+      echo "$path/Assets/DLC"
+      return 0
+    fi
+  done
+  return 1
+}
+
+get_installed_version() {
+  [[ -f "$VERSION_FILE" ]] && cat "$VERSION_FILE"
+}
+
+get_latest_release() {
+  curl -sf "https://api.github.com/repos/${REPO}/releases/latest"
+}
+
+cmd_check() {
+  local installed latest_tag release
+  installed=$(get_installed_version)
+  release=$(get_latest_release)
+
+  if [[ -z "$release" ]]; then
+    echo -e "${RED}✗${NC}  Could not reach GitHub API"
+    return 1
+  fi
+
+  latest_tag=$(echo "$release" | grep '"tag_name"' | cut -d'"' -f4)
+
+  echo -e "${BOLD}Installed:${NC} ${installed:-none}"
+  echo -e "${BOLD}Latest:${NC}    ${latest_tag}"
+
+  if [[ "$installed" == "$latest_tag" ]]; then
+    echo -e "${GREEN}✓${NC}  Already up to date"
+  else
+    echo -e "${YELLOW}!${NC}  Update available: ${latest_tag}"
+    echo -e "   Run ${BOLD}lekmod-update install${NC} to update"
+  fi
+}
+
+cmd_install() {
+  local release latest_tag asset_url zip_url dlc_dir tmp_dir installed
+
+  installed=$(get_installed_version)
+  release=$(get_latest_release)
+
+  if [[ -z "$release" ]]; then
+    echo -e "${RED}✗${NC}  Could not reach GitHub API"
+    return 1
+  fi
+
+  latest_tag=$(echo "$release" | grep '"tag_name"' | cut -d'"' -f4)
+
+  if [[ "$installed" == "$latest_tag" ]]; then
+    echo -e "${GREEN}✓${NC}  Already on latest version (${latest_tag})"
+    return 0
+  fi
+
+  dlc_dir=$(find_dlc_dir)
+  if [[ -z "$dlc_dir" ]]; then
+    echo -e "${RED}✗${NC}  Civ 5 not found. Is the game installed?"
+    echo "   Searched:"
+    for p in "${STEAM_PATHS[@]}"; do
+      echo "     $p"
+    done
+    return 1
+  fi
+
+  # Prefer an explicit release asset (.zip), fall back to repo zipball
+  asset_url=$(echo "$release" | grep '"browser_download_url"' | grep '\.zip' | head -1 | cut -d'"' -f4)
+  zip_url="${asset_url:-https://api.github.com/repos/${REPO}/zipball/${latest_tag}}"
+
+  echo -e "${BLUE}→${NC}  Downloading LekMod ${latest_tag}..."
+
+  tmp_dir=$(mktemp -d)
+  trap 'rm -rf "$tmp_dir"' EXIT
+
+  if ! curl -sfL "$zip_url" -o "${tmp_dir}/lekmod.zip"; then
+    echo -e "${RED}✗${NC}  Download failed"
+    return 1
+  fi
+
+  echo -e "${BLUE}→${NC}  Extracting..."
+  unzip -q "${tmp_dir}/lekmod.zip" -d "${tmp_dir}/extracted"
+
+  # Locate the LEKMOD folder — either a release asset with it at root,
+  # or the repo zipball where it lives one level in under EnormousApplePie-Lekmod-<hash>/
+  local lekmod_src
+  lekmod_src=$(find "${tmp_dir}/extracted" -maxdepth 2 -type d -iname "LEKMOD" | head -1)
+
+  if [[ -z "$lekmod_src" ]]; then
+    echo -e "${RED}✗${NC}  Could not find LEKMOD folder inside zip"
+    return 1
+  fi
+
+  # Remove previous LEKMOD install(s)
+  find "$dlc_dir" -maxdepth 1 -type d -iname "LEKMOD*" -exec rm -rf {} + 2>/dev/null || true
+
+  local dest="${dlc_dir}/LEKMOD_${latest_tag}"
+  mkdir -p "$dlc_dir"
+  cp -r "$lekmod_src" "$dest"
+
+  # v33+ ships linux_ui_check.sh to wire up the correct UI files
+  if [[ -f "${dest}/linux_ui_check.sh" ]]; then
+    echo -e "${BLUE}→${NC}  Running UI check..."
+    bash "${dest}/linux_ui_check.sh"
+  fi
+
+  echo "$latest_tag" > "$VERSION_FILE"
+  echo -e "${GREEN}✓${NC}  LekMod ${latest_tag} installed"
+  echo -e "   ${dest}"
+}
+
+cmd_help() {
+  echo -e "${BOLD}lekmod-update${NC} — LekMod auto-updater for Civ 5"
+  echo ""
+  echo -e "${BOLD}Usage:${NC}"
+  echo "  lekmod-update check     check for a new release"
+  echo "  lekmod-update install   download and install the latest release"
+  echo "  lekmod-update help      show this help"
+  echo ""
+  echo -e "${BOLD}Version file:${NC} ${VERSION_FILE}"
+}
+
+case "$1" in
+  check)            cmd_check ;;
+  install)          cmd_install ;;
+  help|--help|-h)   cmd_help ;;
+  *)                cmd_check ;;
+esac
