@@ -12,3 +12,4 @@ cl
 peek
 seek
 ast-grep
+virt-manager
