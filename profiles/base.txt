@@ -1,4 +1,5 @@
 # Base profile — tools for any machine
+steam
 fzf
 ripgrep
 bat
