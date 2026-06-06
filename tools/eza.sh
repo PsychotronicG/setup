@@ -2,8 +2,6 @@ NAME="eza"
 DESC="Modern replacement for ls"
 CATEGORY="shell"
 
-check() { command -v eza &>/dev/null; }
-
 install() {
   case "$RIG_PKG_MANAGER" in
     apt)

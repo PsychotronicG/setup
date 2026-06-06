@@ -2,8 +2,6 @@ NAME="fzf"
 DESC="Fuzzy finder for the terminal"
 CATEGORY="shell"
 
-check() { command -v fzf &>/dev/null; }
-
 install() {
   pkg_install fzf || {
     git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf

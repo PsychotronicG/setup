@@ -102,8 +102,29 @@ load_tool() {
     return 1
   fi
   unset -f check install 2>/dev/null
-  unset NAME DESC CATEGORY BINARY 2>/dev/null
+  unset NAME DESC CATEGORY BINARY PKG_APT PKG_PACMAN PKG_DNF PKG_ZYPPER PKG_BREW 2>/dev/null
   source "$tool_file"
+
+  # Default check — use BINARY if set, otherwise NAME
+  if ! declare -f check &>/dev/null; then
+    check() { command -v "${BINARY:-$NAME}" &>/dev/null; }
+  fi
+
+  # Default install — use per-OS package variable, falling back to NAME
+  if ! declare -f install &>/dev/null; then
+    install() {
+      local _pkg
+      case "$RIG_PKG_MANAGER" in
+        apt)    _pkg="${PKG_APT:-$NAME}" ;;
+        pacman) _pkg="${PKG_PACMAN:-$NAME}" ;;
+        dnf)    _pkg="${PKG_DNF:-$NAME}" ;;
+        zypper) _pkg="${PKG_ZYPPER:-$NAME}" ;;
+        brew)   _pkg="${PKG_BREW:-$NAME}" ;;
+        *)      _pkg="$NAME" ;;
+      esac
+      pkg_install "$_pkg"
+    }
+  fi
 }
 
 # --- Profile picker helpers ---
