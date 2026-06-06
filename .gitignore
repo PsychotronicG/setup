@@ -1,3 +1,6 @@
+# security assessment — local only, never committed
+SECURITY.md
+
 # machine-specific state
 .active_profile
 dev/recent
