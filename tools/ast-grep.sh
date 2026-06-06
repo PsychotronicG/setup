@@ -2,7 +2,7 @@ NAME="ast-grep"
 DESC="Structural code search and rewrite tool (ast-grep)"
 CATEGORY="search"
 
-check() { command -v ast-grep &>/dev/null; }
+check() { command -v ast-grep &>/dev/null || [[ -x "${HOME}/.cargo/bin/ast-grep" ]]; }
 
 _remove_sg_conflict() {
   local brew_sg
@@ -27,9 +27,11 @@ install() {
         paru -S --noconfirm ast-grep-bin
       elif command -v cargo &>/dev/null; then
         cargo install ast-grep --locked
+        export PATH="${HOME}/.cargo/bin:${PATH}"
       else
         echo "→  Installing rust/cargo via pacman..."
         pkg_install rust
+        export PATH="${HOME}/.cargo/bin:${PATH}"
         cargo install ast-grep --locked
       fi
       ;;
