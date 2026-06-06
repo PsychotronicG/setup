@@ -56,6 +56,21 @@ PKG_MANAGER=""
 PKG_INSTALL=""
 detect_pkg_manager
 
+# ── Arch: offer to install Rust/cargo ────────────────────────────────────────
+
+if [[ "$PKG_MANAGER" == "pacman" ]] && ! command -v cargo &>/dev/null; then
+  echo ""
+  echo -e "${BOLD}Arch detected.${NC} Some tools (e.g. ast-grep) require Rust/cargo to build from source."
+  echo -ne "  Install rust via pacman now? [Y/n] "
+  read -r _rust_reply </dev/tty
+  if [[ "${_rust_reply:-y}" =~ ^[Yy]$ ]]; then
+    sudo pacman -S --noconfirm rust && ok "rust/cargo installed"
+  else
+    warn "Skipped — run 'rig install rust' later if needed"
+  fi
+  echo ""
+fi
+
 # ── Install git if missing ────────────────────────────────────────────────────
 
 step "Checking git"
