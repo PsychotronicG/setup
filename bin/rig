@@ -138,8 +138,11 @@ cmd_profile() {
       echo -e "${GREEN}✓${NC}  Switched to profile '${name}'"
       ;;
     new)
-      echo -ne "${BOLD}Profile name:${NC} "
-      read -r name
+      local name="${1:-}"
+      if [[ -z "$name" ]]; then
+        echo -ne "${BOLD}Profile name:${NC} "
+        read -r name </dev/tty
+      fi
       if [[ -z "$name" ]]; then
         echo "Aborted."
         exit 0
@@ -150,22 +153,43 @@ cmd_profile() {
         exit 1
       fi
 
-      echo ""
-      echo -e "${BOLD}Available tools:${NC}"
+      local lines=()
       for f in "${TOOLS_DIR}"/*.sh; do
         [[ -f "$f" ]] || continue
-        echo "  $(basename "$f" .sh)"
+        local tname desc
+        tname=$(basename "$f" .sh)
+        desc=$(grep '^DESC=' "$f" | cut -d'"' -f2)
+        lines+=("${tname}"$'\t'"${desc}")
       done
 
-      echo ""
-      echo "Add tools to '${name}' (one per line, empty line to finish):"
-      echo "# Profile: ${name}" > "$profile_file"
-      while IFS= read -r tool; do
-        [[ -z "$tool" ]] && break
-        echo "$tool" >> "$profile_file"
-      done
+      local selected
+      selected=$(printf '%s\n' "${lines[@]}" | fzf \
+        --multi \
+        --delimiter=$'\t' \
+        --with-nth=1,2 \
+        --prompt="  [${name}] > " \
+        --header="space: select   enter: confirm   esc: cancel" \
+        --height=80% \
+        --border=rounded \
+        --marker="● " \
+        --pointer="▶ "
+      )
 
-      echo -e "\n${GREEN}✓${NC}  Profile '${name}' created"
+      if [[ -z "$selected" ]]; then
+        echo "Aborted."
+        exit 0
+      fi
+
+      {
+        echo "# Profile: ${name}"
+        while IFS=$'\t' read -r tname _; do
+          echo "$tname"
+        done <<< "$selected"
+      } > "$profile_file"
+
+      local count
+      count=$(echo "$selected" | wc -l)
+      echo -e "\n${GREEN}✓${NC}  Profile '${name}' created with ${count} tool(s)"
       echo -e "   Run ${BOLD}rig profile use ${name}${NC} to activate it."
       ;;
     *)
