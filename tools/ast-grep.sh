@@ -28,8 +28,9 @@ install() {
       elif command -v cargo &>/dev/null; then
         cargo install ast-grep --locked
       else
-        echo "Install yay/paru (AUR helper) or cargo to install ast-grep."
-        return 1
+        echo "→  Installing rust/cargo via pacman..."
+        pkg_install rust
+        cargo install ast-grep --locked
       fi
       ;;
     *)
