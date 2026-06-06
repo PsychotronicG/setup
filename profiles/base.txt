@@ -13,3 +13,4 @@ peek
 seek
 ast-grep
 virt-manager
+vagrant

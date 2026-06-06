@@ -1,0 +1,14 @@
+# Profile: standard
+ast-grep
+bat
+dream
+modport
+ripgrep
+seek
+steam
+fzf
+cl
+dev
+peek
+virt-manager
+vagrant
