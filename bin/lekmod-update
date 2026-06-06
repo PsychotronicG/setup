@@ -115,8 +115,8 @@ cmd_install() {
 
   # Both LEKMOD and Lekmap live under the repo root (one level in for zipball)
   local lekmod_src lekmap_src
-  lekmod_src=$(find "${tmp_dir}/extracted" -maxdepth 2 -type d -iname "LEKMOD" | head -1)
-  lekmap_src=$(find "${tmp_dir}/extracted" -maxdepth 2 -type d -iname "Lekmap" | head -1)
+  lekmod_src=$(find "${tmp_dir}/extracted" -maxdepth 3 -type d -iname "LEKMOD" | head -1)
+  lekmap_src=$(find "${tmp_dir}/extracted" -maxdepth 3 -type d -iname "Lekmap" | head -1)
 
   if [[ -z "$lekmod_src" ]]; then
     echo -e "${RED}✗${NC}  Could not find LEKMOD folder inside zip"
